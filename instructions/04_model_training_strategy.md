@@ -9,7 +9,7 @@ from sklearn.metrics import accuracy_score
 
 vectorizer = TfidfVectorizer(max_features=50000, ngram_range=(1,2))
 X_train_tfidf = vectorizer.fit_transform(train_df['combined'])
-X_val_tfidf = vectorizer.transform(val_df['combined'])
+X_val_tfidf = vectorizer.transform(val_df['combined'])  # NEVER fit on val
 
 model = LogisticRegression(max_iter=1000)
 model.fit(X_train_tfidf, train_df['label'])
@@ -25,12 +25,39 @@ print(f"Baseline Accuracy: {accuracy_score(val_df['label'], preds):.4f}")
 ```
 1. Install: pip install transformers datasets torch accelerate
 2. Load tokenizer: RobertaTokenizer.from_pretrained('roberta-base')
-3. Tokenize dataset (combined = title + [SEP] + text)
+3. Tokenize dataset (combined = title + " [SEP] " + text)
+   NOTE: [SEP] here is PLAIN TEXT — RoBERTa's real separator is </s>,
+         handled automatically by the tokenizer. Do NOT manually change
+         this to </s> — that will double-encode the separator token.
 4. Create PyTorch Dataset class
 5. Load model: RobertaForSequenceClassification.from_pretrained('roberta-base', num_labels=2)
 6. Use HuggingFace Trainer API (simplest approach)
 7. Train for 3 epochs
 8. Evaluate and save
+```
+
+> ⚠️ **RoBERTa does NOT use `token_type_ids`** — never pass them. RoBERTa
+> has `type_vocab_size=1`. If you copy code from a BERT example that passes
+> `token_type_ids`, remove it or it will silently error or be ignored.
+
+### compute_metrics (REQUIRED — without this, Trainer shows NO accuracy)
+```python
+import numpy as np
+from sklearn.metrics import accuracy_score, f1_score
+
+def compute_metrics(eval_pred):
+    logits, labels = eval_pred
+    predictions = np.argmax(logits, axis=-1)
+    acc = accuracy_score(labels, predictions)
+    f1  = f1_score(labels, predictions, average='weighted')
+    return {"accuracy": acc, "f1": f1}
+```
+
+### DataCollatorWithPadding (REQUIRED — prevents batch size/padding crashes)
+```python
+from transformers import DataCollatorWithPadding
+
+data_collator = DataCollatorWithPadding(tokenizer=tokenizer)
 ```
 
 ### HuggingFace Trainer Config
@@ -53,25 +80,52 @@ training_args = TrainingArguments(
     report_to='none',       # Disable wandb
     logging_steps=100,
 )
+
+# FULL Trainer call — eval_dataset MUST be set or evaluation never runs
+trainer = Trainer(
+    model=model,
+    args=training_args,
+    train_dataset=train_dataset,
+    eval_dataset=val_dataset,        # ← REQUIRED
+    tokenizer=tokenizer,
+    data_collator=data_collator,     # ← REQUIRED
+    compute_metrics=compute_metrics, # ← REQUIRED
+)
+trainer.train()
 ```
 
 ## Phase 3: Innovation Add-ons (Do After Baseline Works)
 
 ### Confidence Thresholding
 ```python
+import torch
 import torch.nn.functional as F
 
 def predict_with_confidence(text, threshold=0.70):
-    inputs = tokenizer(text, return_tensors='pt', truncation=True, max_length=512)
-    outputs = model(**inputs)
+    """Always returns a tuple: (label_str, confidence_str)"""
+    inputs = tokenizer(
+        text, return_tensors='pt', truncation=True, max_length=512
+    ).to(device)
+
+    with torch.no_grad():
+        outputs = model(**inputs)
+
     probs = F.softmax(outputs.logits, dim=-1)
     confidence = probs.max().item()
     pred = probs.argmax().item()
-    
+    label = "REAL" if pred == 1 else "FAKE"
+
     if confidence < threshold:
-        return "UNCERTAIN — needs human review"
-    return "REAL" if pred == 1 else "FAKE", f"{confidence:.1%}"
+        label = "UNCERTAIN — needs human review"
+
+    # Always returns SAME type: tuple(str, str)
+    return label, f"{confidence:.1%}"
 ```
+
+> ⚠️ **Bug fixed above**: the original version returned a plain `str` when
+> confidence was below threshold, and a `tuple` otherwise. Any calling code
+> that does `label, conf = predict_with_confidence(text)` would crash on
+> uncertain predictions. Now it always returns `(str, str)`.
 
 ### Error Analysis
 ```python
@@ -93,6 +147,6 @@ print(wrong[['combined', 'true_label', 'predicted', 'confidence']].head(10))
 ```python
 model.save_pretrained('./models/roberta_fakenews')
 tokenizer.save_pretrained('./models/roberta_fakenews')
-# Do NOT commit this folder to GitHub — too large
+# Do NOT commit this folder to GitHub — too large (>400MB)
 # Upload to HuggingFace Hub instead for sharing
 ```
