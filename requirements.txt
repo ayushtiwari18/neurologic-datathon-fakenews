@@ -1,0 +1,22 @@
+# Core ML & NLP
+transformers==4.40.0
+torch==2.2.2
+datasets==2.19.0
+scikit-learn==1.4.2
+numpy==1.26.4
+pandas==2.2.2
+
+# Visualization
+matplotlib==3.8.4
+seaborn==0.13.2
+
+# Utilities
+tqdm==4.66.2
+requests==2.31.0
+beautifulsoup4==4.12.3
+openpyxl==3.1.2
+
+# API Serving (optional deployment)
+fastapi==0.111.0
+uvicorn==0.29.0
+python-multipart==0.0.9
