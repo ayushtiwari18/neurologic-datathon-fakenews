@@ -16,6 +16,10 @@
 │  3. Strip HTML tags                                     │
 │  4. Remove URLs, emails, special characters             │
 │  5. Combine: combined = title + " [SEP] " + text        │
+│     NOTE: "[SEP]" is plain text here — NOT a special    │
+│     token. RoBERTa's real separator is </s>, inserted   │
+│     automatically by the tokenizer. Do NOT replace      │
+│     "[SEP]" with "</s>" manually — that double-encodes. │
 │  6. Encode labels: REAL=1, FAKE=0                       │
 │  7. Train/Val split (80/20, stratified)                 │
 └──────────────────────┬──────────────────────────────────┘
@@ -26,6 +30,9 @@
 │  RobertaTokenizer.from_pretrained('roberta-base')       │
 │  max_length=512, padding=True, truncation=True          │
 │  Output: input_ids, attention_mask tensors              │
+│  ⚠️  Do NOT pass token_type_ids — RoBERTa ignores them  │
+│      (type_vocab_size=1). BERT code copied here will    │
+│      silently break or produce wrong results.           │
 └──────────────────────┬──────────────────────────────────┘
                        │
                        ▼
