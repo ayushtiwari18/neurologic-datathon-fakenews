@@ -35,13 +35,16 @@ print(f"Rows after cleaning: {len(df)}")
 ### Step 3: Clean Text
 ```python
 import re
+import html  # REQUIRED for html.unescape — do not skip this import
 
 def clean_text(text):
-    text = str(text).lower()                          # Lowercase
-    text = re.sub(r'http\S+|www\S+', '', text)        # Remove URLs
-    text = re.sub(r'<.*?>', '', text)                  # Remove HTML tags
-    text = re.sub(r'[^a-z0-9\s.,!?\']', '', text)    # Keep only letters/numbers/basic punctuation
-    text = re.sub(r'\s+', ' ', text).strip()           # Normalize whitespace
+    text = str(text)
+    text = html.unescape(text)                            # Decode HTML entities (&amp; → &, etc.)
+    text = text.lower()                                   # Lowercase
+    text = re.sub(r'http\S+|www\S+', '', text)            # Remove URLs
+    text = re.sub(r'<.*?>', '', text)                     # Remove HTML tags
+    text = re.sub(r'[^a-z0-9\s.,!?\']', '', text)        # Keep only letters/numbers/basic punctuation
+    text = re.sub(r'\s+', ' ', text).strip()              # Normalize whitespace
     return text
 
 df['title_clean'] = df['title'].apply(clean_text)
@@ -53,14 +56,18 @@ df['text_clean'] = df['text'].apply(clean_text)
 # Using [SEP] tells RoBERTa these are two distinct segments
 df['combined'] = df['title_clean'] + ' [SEP] ' + df['text_clean']
 
-# Trim to 512 tokens equivalent (~2000 chars) to avoid truncation loss
+# Trim to ~2000 chars — approximate equivalent of 512 tokens.
+# Actual token count varies by text; this is a safe upper bound.
+# The tokenizer will still truncate at max_length=512 tokens.
 df['combined'] = df['combined'].apply(lambda x: x[:2000])
 ```
 
 ### Step 5: Encode Labels
 ```python
-label_map = {'REAL': 1, 'real': 1, '1': 1, 1: 1,
-             'FAKE': 0, 'fake': 0, '0': 0, 0: 0}
+# NOTE: pandas may load numeric labels as float (1.0, 0.0) —
+# the label_map below includes float keys to handle this case.
+label_map = {'REAL': 1, 'real': 1, '1': 1, 1: 1, 1.0: 1,
+             'FAKE': 0, 'fake': 0, '0': 0, 0: 0, 0.0: 0}
 df['label'] = df['label'].map(label_map)
 
 # Verify no unmapped labels
@@ -107,6 +114,6 @@ print(f"Max text length: {df['text_len'].max()} chars")
 |---|---|---|
 | Duplicate articles | `df.duplicated('combined').sum()` | `df.drop_duplicates('combined')` |
 | Labels as strings | `df['label'].dtype == object` | Map using `label_map` |
-| HTML entities (`&amp;`) | Check sample text | `html.unescape(text)` |
+| HTML entities (`&amp;`) | Check sample text | `html.unescape(text)` — already in clean_text |
 | Non-English articles | Spot-check text | `langdetect` library filter |
 | Extreme class imbalance | `value_counts()` ratio > 4:1 | Report it, use `class_weight='balanced'` |
