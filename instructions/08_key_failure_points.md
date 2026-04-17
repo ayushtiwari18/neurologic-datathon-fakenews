@@ -34,15 +34,32 @@ TITLE_COL = 'title'  # ← change this if needed
 LABEL_COL = 'label'  # ← change this if needed
 ```
 
+### 5. Test Set Has No Labels (Hackathon Holdout)
+**Problem:** The organizers may provide a separate `test.csv` WITHOUT a label column.
+If you try to evaluate accuracy on it, your code will crash or produce wrong metrics.
+**Fix:**
+- Split your own train data into train/val (80/20) and report metrics on YOUR val set
+- Use the unlabeled test set ONLY for generating `predictions.csv` to submit
+- Never report accuracy computed on the test set as your final metric
+```python
+# Check if label column exists before evaluating
+if LABEL_COL in test_df.columns:
+    # Evaluate
+else:
+    # Generate predictions only — no ground truth available
+    test_df['predicted'] = predictions
+    test_df.to_csv('outputs/test_predictions.csv', index=False)
+```
+
 ---
 
 ## 🟡 Medium Failures (Will Hurt Score)
 
-### 5. Not Using Stratified Split
+### 6. Not Using Stratified Split
 **Problem:** Random split may put 90% FAKE in val — metrics look artificially high/low
 **Fix:** Always use `stratify=df['label']` in train_test_split
 
-### 6. Data Leakage
+### 7. Data Leakage
 **Problem:** Preprocessing (e.g., TF-IDF fit) done on full dataset before split → inflated accuracy
 **Fix:** Fit vectorizer ONLY on training data, transform val separately
 ```python
@@ -51,11 +68,11 @@ X_train = vectorizer.transform(train_df['combined'])
 X_val = vectorizer.transform(val_df['combined'])  # transform only
 ```
 
-### 7. Reporting Accuracy on Training Set
+### 8. Reporting Accuracy on Training Set
 **Problem:** Training accuracy is always high — means nothing
 **Fix:** Only report metrics computed on `val_df` (held-out data)
 
-### 8. Forgetting fp16=True
+### 9. Forgetting fp16=True
 **Problem:** Training takes 2x longer without mixed precision
 **Fix:** Always set `fp16=True` in TrainingArguments when using GPU
 
@@ -63,11 +80,11 @@ X_val = vectorizer.transform(val_df['combined'])  # transform only
 
 ## 🟢 Common Mistakes (Will Slow You Down)
 
-### 9. Not Setting Random Seeds
+### 10. Not Setting Random Seeds
 **Problem:** Results differ between runs — can't reproduce your best accuracy
 **Fix:** Set seeds at top of every notebook (see 05_colab_setup.md)
 
-### 10. Large Model Files in Git
+### 11. Large Model Files in Git
 **Problem:** `pytorch_model.bin` is 500MB+ — GitHub will reject
 **Fix:** Add to `.gitignore`:
 ```
@@ -80,10 +97,10 @@ __pycache__/
 data/raw/
 ```
 
-### 11. Notebook Not Running Top-to-Bottom
+### 12. Notebook Not Running Top-to-Bottom
 **Problem:** Cells run out of order leave hidden state — other team members can't reproduce
 **Fix:** Before submitting, do **Runtime → Restart and run all** and verify it completes
 
-### 12. Missing Screenshots
+### 13. Missing Screenshots
 **Problem:** README has no visuals — judges can't quickly validate your results
 **Fix:** At minimum, screenshot: (1) training loss curve, (2) confusion matrix, (3) final accuracy print
