@@ -1,10 +1,15 @@
 # Core ML & NLP
 transformers==4.40.0
-torch==2.2.2
 datasets==2.19.0
+accelerate==0.29.0
 scikit-learn==1.4.2
 numpy==1.26.4
 pandas==2.2.2
+
+# NOTE: Do NOT pin torch with --index-url https://download.pytorch.org/whl/cu118
+# Colab T4 uses CUDA 12.x — pinning cu118 breaks the pre-installed torch.
+# Let Colab manage its own torch installation. Only install transformers/datasets/accelerate.
+# torch is pre-installed on Colab — importing it directly will work fine.
 
 # Visualization
 matplotlib==3.8.4
@@ -15,6 +20,9 @@ tqdm==4.66.2
 requests==2.31.0
 beautifulsoup4==4.12.3
 openpyxl==3.1.2
+
+# Demo UI (Gradio — easiest way to demo in Colab)
+gradio>=4.0.0
 
 # API Serving (optional deployment)
 fastapi==0.111.0
