@@ -12,9 +12,15 @@
 ### Step 2: Install All Dependencies (Run First Cell)
 ```python
 # Cell 1 — Run this FIRST every session
+# NOTE: Do NOT pin torch with --index-url https://download.pytorch.org/whl/cu118
+# Colab T4 uses CUDA 12.x — pinning cu118 creates version conflicts with
+# the pre-installed torch. Let Colab manage its own torch installation.
+import os
+os.environ["TOKENIZERS_PARALLELISM"] = "false"  # Suppress tokenizer fork warnings
+
 !pip install -q transformers==4.40.0 datasets==2.19.0 accelerate==0.29.0
 !pip install -q scikit-learn pandas numpy matplotlib seaborn
-!pip install -q torch torchvision --index-url https://download.pytorch.org/whl/cu118
+# torch is already installed correctly in Colab — do NOT reinstall it
 ```
 
 ### Step 3: Mount Google Drive (for saving model/data)
