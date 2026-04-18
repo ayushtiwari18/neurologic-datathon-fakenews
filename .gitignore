@@ -1,0 +1,144 @@
+# ============================================================
+# FakeGuard — .gitignore
+# NeuroLogic '26 Datathon — Fake News Detection
+# ============================================================
+
+# ------------------------------------------------------------
+# Python Virtual Environments
+# ------------------------------------------------------------
+venv/
+.venv/
+env/
+.env/
+ENV/
+.python-version
+
+# ------------------------------------------------------------
+# Python Cache
+# ------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+*.pyd
+.Python
+build/
+dist/
+*.egg-info/
+*.egg
+
+# ------------------------------------------------------------
+# Jupyter Notebooks
+# ------------------------------------------------------------
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+
+# ------------------------------------------------------------
+# Datasets — NEVER commit raw or processed data
+# ------------------------------------------------------------
+data/raw/
+data/processed/
+data/*.csv
+data/*.tsv
+data/*.json
+data/*.xlsx
+data/*.parquet
+data/*.zip
+data/*.gz
+# Exception: keep .gitkeep files to preserve empty dirs
+!data/.gitkeep
+!data/processed/.gitkeep
+
+# ------------------------------------------------------------
+# Model Weights — NEVER commit (too large, use HuggingFace Hub)
+# ------------------------------------------------------------
+models/
+*.bin
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+*.onnx
+*.pkl
+# Exception: keep .gitkeep
+!models/.gitkeep
+
+# ------------------------------------------------------------
+# Output Files — generated at runtime
+# ------------------------------------------------------------
+outputs/*.csv
+outputs/*.json
+outputs/*.png
+outputs/*.jpg
+outputs/*.pdf
+# Exception: keep .gitkeep and submission template
+!outputs/.gitkeep
+
+# ------------------------------------------------------------
+# Logs
+# ------------------------------------------------------------
+*.log
+logs/
+runs/
+
+# ------------------------------------------------------------
+# Environment / Secrets
+# ------------------------------------------------------------
+.env
+.env.local
+.env.*.local
+*.secret
+secrets.json
+
+# ------------------------------------------------------------
+# HuggingFace Cache
+# ------------------------------------------------------------
+.cache/
+~/.cache/huggingface/
+transformers_cache/
+
+# ------------------------------------------------------------
+# OS Files
+# ------------------------------------------------------------
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+
+# ------------------------------------------------------------
+# IDE / Editor
+# ------------------------------------------------------------
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.classpath
+.settings/
+
+# ------------------------------------------------------------
+# Testing
+# ------------------------------------------------------------
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# ------------------------------------------------------------
+# Weights & Biases (if accidentally enabled)
+# ------------------------------------------------------------
+wandb/
+
+# ------------------------------------------------------------
+# Temporary files
+# ------------------------------------------------------------
+tmp/
+temp/
+*.tmp
+*.bak
+*.orig
