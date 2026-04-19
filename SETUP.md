@@ -332,3 +332,7 @@ Once all checks pass, run:
 python src/preprocess.py
 ```
 Then tell the AI: **"Setup verified, run Cycle 7"**
+
+
+# This is the correct way — launch python first, then type the commands
+python3 -c "import torch; print('GPU:', torch.cuda.is_available()); print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'No GPU found — use Colab/Kaggle')"
