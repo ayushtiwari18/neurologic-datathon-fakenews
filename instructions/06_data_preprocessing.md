@@ -75,21 +75,39 @@ assert df['label'].isnull().sum() == 0, "Label encoding failed — check label c
 print(df['label'].value_counts())
 ```
 
-### Step 6: Train/Validation Split
+### Step 6: Train / Validation / Test Split (70 / 15 / 15)
 ```python
 from sklearn.model_selection import train_test_split
 
-train_df, val_df = train_test_split(
+# Step 6a: Split off 70% train, 30% temp
+train_df, temp_df = train_test_split(
     df[['combined', 'label']],
-    test_size=0.20,
+    test_size=0.30,
     random_state=42,
-    stratify=df['label']   # Ensures same Real/Fake ratio in both splits
+    stratify=df['label']
 )
 
-print(f"Train: {len(train_df)} | Val: {len(val_df)}")
+# Step 6b: Split temp 50/50 → 15% val, 15% test
+val_df, test_df = train_test_split(
+    temp_df,
+    test_size=0.50,
+    random_state=42,
+    stratify=temp_df['label']
+)
+
+print(f"Train : {len(train_df)} (70%)")
+print(f"Val   : {len(val_df)}   (15%)")
+print(f"Test  : {len(test_df)}  (15%)")
+
 train_df.to_csv('data/processed/train.csv', index=False)
 val_df.to_csv('data/processed/val.csv', index=False)
+test_df.to_csv('data/processed/test.csv', index=False)
 ```
+
+> ✅ **Split used in actual notebook run:** 70 / 15 / 15
+> - Train = model learns from this
+> - Val = used during training to check accuracy each epoch
+> - Test = held-out set used only for final predictions.csv
 
 ### Step 7: EDA Checks to Report
 ```python
