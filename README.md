@@ -26,6 +26,8 @@ Fake news spreads **6× faster** than real news (MIT Study, 2018). Manual fact-c
 | TF-IDF + Logistic Regression (baseline) | 94.66% | 0.9466 | 0.95 | 0.95 | ~12 sec |
 | **RoBERTa fine-tuned (ours)** | **99.42%** | **0.9942** | **0.9943** | **0.9942** | ~116 min |
 
+> ✅ **Metric verifiability:** 99.42% accuracy is measured on the **held-out validation set** (15% of WELFake = 9,552 articles). This split was **never seen during training**. Evaluation ran after all 3 epochs completed, using the best checkpoint selected by `load_best_model_at_end=True`.
+
 ### Training Progress
 | Epoch | Training Loss | Val Loss | Accuracy | F1 |
 |---|---|---|---|---|
@@ -119,19 +121,22 @@ In Kaggle: **Add Data** → search **WELFake** → Add to notebook.
 ### Step 3 — Set GPU
 Settings → Accelerator → **GPU T4 x1** (NOT P100)
 
-### Step 4 — Run All Cells
+### Step 4 — Run All Cells in Order
 | Cell | Task | Time |
 |---|---|---|
+| **0** | **⚠️ Inspect dataset columns (run FIRST)** | instant |
 | 1 | Fix package conflicts | 30 sec |
 | 2 | Restart kernel | instant |
 | 3 | GPU check | instant |
 | 4 | Clone repo | 30 sec |
 | 5 | Find dataset | instant |
-| 6 | Preprocess | ~2 min |
-| 7 | Baseline model | ~2 min |
-| 8 | Train RoBERTa | ~30 min (or load from Hub) |
-| 9 | Evaluate | ~5 min |
+| 6 | Preprocess data (70/15/15 split) | ~2 min |
+| 7 | Baseline model (TF-IDF + LR) | ~2 min |
+| 8 | Train RoBERTa (3 epochs) | ~30 min |
+| 8B | Resume from checkpoint (only if crash) | only if needed |
+| 9 | Evaluate — confusion matrix + metrics | ~5 min |
 | 10 | Generate predictions.csv | ~5 min |
+| **11** | **🎯 Launch Gradio live demo (public URL for judges)** | ~1 min |
 
 ### Load Pre-trained Model (Faster — Skip Training)
 ```python
@@ -144,20 +149,21 @@ model     = AutoModelForSequenceClassification.from_pretrained("ayushtiwari18/fa
 
 ---
 
-## 🖥️ Run Gradio Demo
+## 🎯 Live Interactive Demo
 
-```python
-# In Kaggle or Colab — after model is loaded
-import subprocess
-subprocess.Popen(["python", "app/gradio_demo.py"])
-# Opens shareable public URL via Gradio tunnel
+Run **Cell 11** in the Kaggle notebook after training completes.
+
+Cell 11 installs Gradio and launches a public shareable link:
+```
+https://xxxx.gradio.live  ← live URL appears in ~30 seconds
 ```
 
-Features:
-- Single article prediction with confidence meter
+Demo features:
+- Type any news headline + body → instant **FAKE / REAL / UNCERTAIN** verdict
+- Color-coded confidence meter 🔴 / 🟢 / 🟡
 - Batch prediction mode
-- Color-coded verdict: 🔴 FAKE / 🟢 REAL / 🟡 UNCERTAIN
 - Pre-loaded example articles
+- **Keep Cell 11 running** — stopping it takes the link offline
 
 ---
 
@@ -208,7 +214,7 @@ TrainingArguments(
 ## 📦 Requirements
 
 ```bash
-pip install transformers accelerate datasets scikit-learn pandas seaborn
+pip install transformers accelerate datasets scikit-learn pandas seaborn gradio
 ```
 
 Or install all at once:
@@ -222,11 +228,15 @@ pip install -r requirements.txt
 
 **WELFake Dataset** — 72,134 news articles (35,028 Real + 37,106 Fake)
 
-| Split | Size |
-|---|---|
-| Train | 44,574 |
-| Validation | 9,552 |
-| Test | 9,552 |
+**Split method:** Stratified 70 / 15 / 15 split using `sklearn.model_selection.train_test_split` with `stratify=label` and `random_state=42`. This ensures identical Real/Fake ratio across all three splits.
+
+| Split | Size | % of Total | Purpose |
+|---|---|---|---|
+| Train | 50,493 | 70% | Model learning |
+| Validation | 10,820 | 15% | Epoch-level evaluation, early stopping |
+| Test | 10,821 | 15% | Final predictions.csv generation |
+
+> ⚠️ The **test split was never used during training or validation**. It is the held-out set used only to generate `predictions.csv` for submission.
 
 Source: [Kaggle — WELFake Dataset](https://www.kaggle.com/datasets/saurabhshahane/fake-news-classification)
 
