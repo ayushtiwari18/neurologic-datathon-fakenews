@@ -1,6 +1,6 @@
 """
 gradio_demo.py — Interactive Fake News Detector UI for FakeGuard.
-XAI Edition: LIME word-level explanations added for judge Innovation + Impact scores.
+XAI Edition: LIME word-level explanations + Explanation Summary Sentence added.
 
 Source of truth:
     - instructions/09_features_and_routes.md
@@ -11,12 +11,13 @@ What this does:
     Launches a Gradio web interface where anyone can type a news article
     (title + body) and instantly get a REAL / FAKE / UNCERTAIN verdict
     with a confidence score AND a LIME explanation showing which words
-    triggered the prediction.
+    triggered the prediction, plus a plain-English summary sentence.
 
 Features:
     - Single article prediction with confidence bar
     - Colour-coded verdict: 🟢 REAL | 🔴 FAKE | 🟡 UNCERTAIN
     - XAI: LIME word-level highlights (red = pushed toward FAKE, green = pushed toward REAL)
+    - XAI: Plain-English explanation summary sentence (top 3 trigger words)
     - Batch prediction from CSV upload
     - Example articles pre-loaded (one real, one fake)
     - Public shareable URL via Gradio tunnel (share=True)
@@ -65,20 +66,15 @@ logger = get_logger("gradio_demo")
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Lazy-loaded globals — model loads once on first prediction, not at import
-# This prevents slow startup and avoids OOM if model isn't needed yet.
 _model     = None
 _tokenizer = None
 _device    = None
 
 
 def _load_model_once():
-    """
-    Load model and tokenizer into global cache on first call.
-    Subsequent calls return immediately (no re-loading).
-    """
     global _model, _tokenizer, _device
     if _model is not None:
-        return  # already loaded
+        return
 
     import torch
     from transformers import RobertaForSequenceClassification, AutoTokenizer
@@ -110,19 +106,6 @@ def _load_model_once():
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _lime_predict_proba(texts: list) -> "np.ndarray":
-    """
-    Probability predictor for LIME.
-
-    LIME works by masking random words in the input and asking:
-    'how much did the prediction change?'
-    Words that cause big changes = most important words.
-
-    Args:
-        texts: list of strings (LIME passes many masked variants here)
-
-    Returns:
-        np.ndarray of shape (n_samples, 2) — [prob_FAKE, prob_REAL]
-    """
     import torch
     import torch.nn.functional as F
     import numpy as np
@@ -130,7 +113,6 @@ def _lime_predict_proba(texts: list) -> "np.ndarray":
     _load_model_once()
     results = []
 
-    # Process in small batches to avoid OOM
     batch_size = 8
     for i in range(0, len(texts), batch_size):
         batch = texts[i : i + batch_size]
@@ -151,38 +133,65 @@ def _lime_predict_proba(texts: list) -> "np.ndarray":
     return __import__("numpy").vstack(results)
 
 
-def _generate_lime_explanation(combined_text: str, pred_label: str, n_samples: int = 200) -> str:
+def _generate_explanation_summary(word_weights: dict, pred_label: str) -> str:
     """
-    Generate a LIME explanation as an HTML string showing highlighted words.
+    Generate a plain-English summary sentence from LIME word weights.
 
-    How LIME works (beginner explanation):
-    - LIME creates ~200 slightly modified versions of your article
-      (randomly hiding some words each time)
-    - It asks the model to predict each version
-    - Words whose removal changes the prediction most = most important words
-    - Red words pushed toward FAKE, green words pushed toward REAL
+    Example output:
+        "This article was flagged as FAKE because it contained strong signals:
+         'SHOCKING' (+0.312), 'leaked document' (+0.289), 'secret meeting' (+0.201)."
 
     Args:
-        combined_text : The full article text (title [SEP] body)
-        pred_label    : "FAKE" or "REAL" — the model's prediction
-        n_samples     : How many masked variants LIME generates (more = slower but better)
+        word_weights : dict of {word: weight} from LIME
+        pred_label   : "FAKE" or "REAL"
 
     Returns:
-        HTML string with colour-highlighted words, or a fallback message string.
+        A plain-English string summarising the top 3 trigger words.
+    """
+    # Sort by absolute weight descending, take top 3
+    top_words = sorted(word_weights.items(), key=lambda x: abs(x[1]), reverse=True)[:3]
+
+    if not top_words:
+        return f"The model predicted {pred_label} based on overall language patterns."
+
+    word_list = ", ".join(
+        f"'{w}' ({'+' if s > 0 else ''}{s:.3f})"
+        for w, s in top_words
+    )
+
+    if pred_label == "FAKE":
+        return (
+            f"⚠️ This article was flagged as FAKE because it contained "
+            f"high-weight signals: {word_list}. "
+            f"These words are strongly associated with fake news in the training data."
+        )
+    else:
+        return (
+            f"✅ This article was classified as REAL because it contained "
+            f"credible language signals: {word_list}. "
+            f"These words are strongly associated with real, verified news."
+        )
+
+
+def _generate_lime_explanation(combined_text: str, pred_label: str, n_samples: int = 200):
+    """
+    Generate LIME explanation — returns (html_string, summary_sentence).
+
+    Returns:
+        tuple: (lime_html: str, summary_sentence: str)
     """
     try:
         from lime.lime_text import LimeTextExplainer
         import numpy as np
     except ImportError:
-        return (
+        fallback = (
             "<p style='color:#888; font-style:italic;'>"
             "⚠️ LIME not installed — XAI unavailable. "
             "Run: <code>pip install lime</code> then restart."
             "</p>"
         )
+        return fallback, "XAI summary unavailable — LIME not installed."
 
-    # Which class index are we explaining?
-    # FAKE = 0, REAL = 1
     explain_class = 0 if pred_label == "FAKE" else 1
 
     try:
@@ -193,18 +202,17 @@ def _generate_lime_explanation(combined_text: str, pred_label: str, n_samples: i
         explanation = explainer.explain_instance(
             combined_text,
             _lime_predict_proba,
-            num_features=12,          # show top 12 most important words
-            num_samples=n_samples,    # 200 masked variants
+            num_features=12,
+            num_samples=n_samples,
             labels=[explain_class],
         )
 
-        # Build colour-highlighted HTML
-        # LIME returns (word, weight) pairs
-        # positive weight = word supports this class
-        # negative weight = word opposes this class
         word_weights = dict(explanation.as_list(label=explain_class))
 
-        # Tokenise text by whitespace for highlighting
+        # ── Plain-English Summary Sentence ──────────────────────────────────
+        summary_sentence = _generate_explanation_summary(word_weights, pred_label)
+
+        # ── HTML Word Highlights ─────────────────────────────────────────────
         words = combined_text.split()
 
         html_parts = [
@@ -216,18 +224,14 @@ def _generate_lime_explanation(combined_text: str, pred_label: str, n_samples: i
         ]
 
         for word in words:
-            # Strip punctuation for lookup but keep original for display
-            clean = word.strip(".,!?\"'()[]{}:;")
+            clean  = word.strip(".,!?\"'()[]{}:;")
             weight = word_weights.get(clean, 0.0)
 
             if abs(weight) < 0.01:
-                # Unimportant word — plain text
                 html_parts.append(f"<span>{word} </span>")
             elif weight > 0:
-                # Supports the predicted class
                 intensity = min(int(abs(weight) * 800), 200)
                 if pred_label == "FAKE":
-                    # Supporting FAKE → red
                     color = f"rgba(220,50,50,0.{intensity:03d})"
                     html_parts.append(
                         f"<span style='background:{color}; padding:2px 4px; "
@@ -235,7 +239,6 @@ def _generate_lime_explanation(combined_text: str, pred_label: str, n_samples: i
                         f"title='FAKE signal: +{weight:.3f}'>{word} </span>"
                     )
                 else:
-                    # Supporting REAL → green
                     color = f"rgba(40,180,80,0.{intensity:03d})"
                     html_parts.append(
                         f"<span style='background:{color}; padding:2px 4px; "
@@ -243,10 +246,8 @@ def _generate_lime_explanation(combined_text: str, pred_label: str, n_samples: i
                         f"title='REAL signal: +{weight:.3f}'>{word} </span>"
                     )
             else:
-                # Opposes the predicted class
                 intensity = min(int(abs(weight) * 800), 200)
                 if pred_label == "FAKE":
-                    # Opposing FAKE → green (pushes toward REAL)
                     color = f"rgba(40,180,80,0.{intensity:03d})"
                     html_parts.append(
                         f"<span style='background:{color}; padding:2px 4px; "
@@ -254,7 +255,6 @@ def _generate_lime_explanation(combined_text: str, pred_label: str, n_samples: i
                         f"title='REAL signal: {weight:.3f}'>{word} </span>"
                     )
                 else:
-                    # Opposing REAL → red (pushes toward FAKE)
                     color = f"rgba(220,50,50,0.{intensity:03d})"
                     html_parts.append(
                         f"<span style='background:{color}; padding:2px 4px; "
@@ -263,29 +263,16 @@ def _generate_lime_explanation(combined_text: str, pred_label: str, n_samples: i
                     )
 
         html_parts.append("</div>")
-        return "".join(html_parts)
+        return "".join(html_parts), summary_sentence
 
     except Exception as e:
         logger.warning("LIME explanation failed: %s", e)
-        return f"<p style='color:#888;'>XAI explanation unavailable: {e}</p>"
+        err_html = f"<p style='color:#888;'>XAI explanation unavailable: {e}</p>"
+        return err_html, f"XAI summary unavailable: {e}"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 def predict_single(title: str, body: str, run_xai: bool = True) -> dict:
-    """
-    Run inference on a single article (title + body).
-
-    Combines title and body using the same [SEP] format as preprocessing.
-    Returns verdict, confidence, detailed breakdown, and LIME HTML explanation.
-
-    Args:
-        title   : Article headline.
-        body    : Article body text.
-        run_xai : If True, generate LIME explanation (adds ~5-10 seconds).
-
-    Returns:
-        dict with keys: verdict, confidence, label, uncertain, explanation, lime_html
-    """
     import torch
     import torch.nn.functional as F
 
@@ -294,15 +281,15 @@ def predict_single(title: str, body: str, run_xai: bool = True) -> dict:
 
     if not title and not body:
         return {
-            "verdict":     "🟡 PLEASE ENTER TEXT",
-            "confidence":  0.0,
-            "label":       "N/A",
-            "uncertain":   True,
-            "explanation": "Please enter a headline and/or article body above.",
-            "lime_html":   "",
+            "verdict":          "🟡 PLEASE ENTER TEXT",
+            "confidence":       0.0,
+            "label":            "N/A",
+            "uncertain":        True,
+            "explanation":      "Please enter a headline and/or article body above.",
+            "lime_html":        "",
+            "summary_sentence": "",
         }
 
-    # Combine exactly as preprocessing does: title [SEP] body
     if title and body:
         combined = f"{title} [SEP] {body}"
     elif title:
@@ -360,58 +347,53 @@ def predict_single(title: str, body: str, run_xai: bool = True) -> dict:
             f"Analysed text: \"{display_text}\""
         )
 
-    # Generate LIME explanation
+    lime_html        = ""
+    summary_sentence = ""
+
     if run_xai and not uncertain:
-        lime_html = _generate_lime_explanation(
+        lime_html, summary_sentence = _generate_lime_explanation(
             combined_text=combined,
             pred_label=label,
             n_samples=200,
         )
     elif uncertain:
-        lime_html = (
+        lime_html        = (
             "<p style='color:#888; font-style:italic;'>"
             "XAI unavailable for UNCERTAIN predictions — confidence too low."
             "</p>"
         )
-    else:
-        lime_html = ""
+        summary_sentence = "Confidence too low for XAI summary."
 
     return {
-        "verdict":     verdict,
-        "confidence":  round(confidence, 4),
-        "label":       label,
-        "uncertain":   uncertain,
-        "fake_prob":   round(fake_prob, 4),
-        "real_prob":   round(real_prob, 4),
-        "explanation": explanation,
-        "lime_html":   lime_html,
+        "verdict":          verdict,
+        "confidence":       round(confidence, 4),
+        "label":            label,
+        "uncertain":        uncertain,
+        "fake_prob":        round(fake_prob, 4),
+        "real_prob":        round(real_prob, 4),
+        "explanation":      explanation,
+        "lime_html":        lime_html,
+        "summary_sentence": summary_sentence,
     }
 
 
 def _gradio_predict(title: str, body: str):
     """
-    Gradio interface function — returns (verdict, explanation, confidence, lime_html).
-    This is the function Gradio calls directly on every button press.
+    Gradio interface function — returns 5 values:
+    (verdict, explanation, confidence, summary_sentence, lime_html)
     """
     result = predict_single(title, body, run_xai=True)
     return (
         result["verdict"],
         result["explanation"],
         result["confidence"],
+        result["summary_sentence"],
         result["lime_html"],
     )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 def launch_demo(share: bool = True, server_port: int = 7860) -> None:
-    """
-    Build and launch the Gradio interface with XAI word highlights.
-
-    Args:
-        share       : If True, creates a public shareable link via Gradio tunnel.
-                      Share=True is REQUIRED for Kaggle (no localhost access).
-        server_port : Local port to serve on (default: 7860).
-    """
     try:
         import gradio as gr
     except ImportError:
@@ -443,7 +425,8 @@ def launch_demo(share: bool = True, server_port: int = 7860) -> None:
         css="""
             .verdict-box { font-size: 1.4em; font-weight: bold; padding: 12px; border-radius: 8px; }
             .footer-text { color: #888; font-size: 0.85em; text-align: center; margin-top: 8px; }
-            .xai-header  { font-weight: 600; color: #333; margin-bottom: 4px; }
+            .summary-box { background: #f0f7ff; border-left: 4px solid #2196F3; padding: 12px 16px;
+                           border-radius: 6px; font-size: 0.95em; margin-top: 8px; }
         """,
     ) as demo:
 
@@ -452,7 +435,7 @@ def launch_demo(share: bool = True, server_port: int = 7860) -> None:
             # 🛡️ FakeGuard — AI Fake News Detector
             ### NeuroLogic '26 Datathon | RoBERTa + XAI Explainability
             Enter a news article headline and body to get an instant **REAL / FAKE** prediction
-            — plus **word-level highlights** showing exactly WHY the model decided.
+            — plus **word-level highlights** and a **plain-English explanation** of WHY the model decided.
             """
         )
 
@@ -493,34 +476,40 @@ def launch_demo(share: bool = True, server_port: int = 7860) -> None:
                 )
                 explanation_output = gr.Textbox(
                     label="📊 Detailed Breakdown",
-                    lines=5,
+                    lines=4,
                     interactive=False,
+                )
+                summary_output = gr.Textbox(
+                    label="💡 XAI Summary — Why did the model decide this?",
+                    lines=3,
+                    interactive=False,
+                    elem_classes=["summary-box"],
                 )
 
         # XAI section — full width below
         gr.Markdown("---")
         gr.Markdown(
-            "## 🔬 XAI — Why did the model decide this?\n"
-            "The highlighted words below show the model's reasoning. "
+            "## 🔬 XAI Word Highlights\n"
+            "The highlighted words below show the model's reasoning word-by-word. "
             "**Red** = pushed toward FAKE &nbsp;|&nbsp; **Green** = pushed toward REAL. "
-            "This uses LIME (Local Interpretable Model-agnostic Explanations)."
+            "Powered by LIME (Local Interpretable Model-agnostic Explanations)."
         )
         lime_output = gr.HTML(
             value="<p style='color:#aaa; font-style:italic;'>Run a prediction above to see word-level highlights here.</p>",
             label="XAI Word Highlights",
         )
 
-        # Wire up button — now returns 4 values including lime_html
+        # Wire up button — 5 outputs now
         predict_btn.click(
             fn=_gradio_predict,
             inputs=[title_input, body_input],
-            outputs=[verdict_output, explanation_output, confidence_output, lime_output],
+            outputs=[verdict_output, explanation_output, confidence_output, summary_output, lime_output],
         )
 
         title_input.submit(
             fn=_gradio_predict,
             inputs=[title_input, body_input],
-            outputs=[verdict_output, explanation_output, confidence_output, lime_output],
+            outputs=[verdict_output, explanation_output, confidence_output, summary_output, lime_output],
         )
 
         gr.Examples(
@@ -534,7 +523,7 @@ def launch_demo(share: bool = True, server_port: int = 7860) -> None:
             f"""
             ---
             **Model:** `roberta-base` fine-tuned on WELFake (~72k articles)
-            **XAI method:** LIME (Local Interpretable Model-agnostic Explanations)
+            **XAI methods:** LIME word highlights + Plain-English explanation summary
             **Uncertainty threshold:** {CONFIDENCE_THRESHOLD:.0%} confidence
             **Labels:** FAKE (0) | REAL (1)
             **Baseline (TF-IDF + LR):** 94.66% accuracy | **FakeGuard target:** ~97–98%
@@ -554,17 +543,8 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(description="Launch FakeGuard Gradio demo")
-    parser.add_argument(
-        "--no-share",
-        action="store_true",
-        help="Disable public sharing link (local only)",
-    )
-    parser.add_argument(
-        "--port",
-        type=int,
-        default=7860,
-        help="Local server port (default: 7860)",
-    )
+    parser.add_argument("--no-share", action="store_true", help="Disable public sharing link")
+    parser.add_argument("--port", type=int, default=7860, help="Local server port")
     args = parser.parse_args()
 
     set_seed(SEED)
