@@ -10,11 +10,11 @@ Responsibilities:
     2. Validate required columns
     3. Handle missing values
     4. Clean text (HTML entities, URLs, special chars, lowercase)
-    5. Create combined = title_clean + " [SEP] " + text_clean
+    5. Create combined = subject_clean + " [SEP] " + title_clean + " [SEP] " + text_clean
        NOTE: [SEP] is PLAIN TEXT — NOT a special token.
              RoBERTa's real separator </s> is inserted automatically
              by the tokenizer. Do NOT change [SEP] to </s> manually.
-    6. Encode labels: REAL=1, FAKE=0 (per instructions/06)
+    6. Encode labels: TRUE=1, FALSE=0 (competition dataset format)
     7. Stratified split:
          - Official hackathon mode: 80/20 train/val, keep provided test.csv
          - Single-file WELFake mode: 70/15/15 train/val/test
@@ -48,6 +48,7 @@ from config import (
     OUTPUTS_DIR,
     TITLE_COL,
     BODY_COL,
+    SUBJECT_COL,
     TEXT_COL,
     LABEL_COL,
     LABEL2ID,
@@ -63,16 +64,9 @@ logger = get_logger("preprocess")
 def clean_text(text: str) -> str:
     """
     Clean a single text string per instructions/06_data_preprocessing.md.
-
-    Args:
-        text: Raw input string.
-
-    Returns:
-        str: Cleaned lowercase string.
     """
     if not isinstance(text, str):
         return ""
-
     text = html.unescape(text)
     text = text.lower()
     text = re.sub(r"http\S+|www\S+", "", text)
@@ -83,17 +77,6 @@ def clean_text(text: str) -> str:
 
 
 def validate_columns(df: pd.DataFrame, required: list, name: str = "DataFrame") -> None:
-    """
-    Assert all required columns exist in DataFrame.
-
-    Args:
-        df: DataFrame to check.
-        required: Required column names.
-        name: Dataset label for logging.
-
-    Raises:
-        ValueError: If required columns are missing.
-    """
     missing = [c for c in required if c not in df.columns]
     if missing:
         raise ValueError(
@@ -103,39 +86,16 @@ def validate_columns(df: pd.DataFrame, required: list, name: str = "DataFrame") 
 
 
 def handle_missing(df: pd.DataFrame, name: str = "DataFrame") -> pd.DataFrame:
-    """
-    Handle null values per instructions/06.
-
-    Rules:
-        - Drop rows where BOTH title and text are null
-        - Fill individual nulls with empty strings
-
-    Args:
-        df: Input DataFrame.
-        name: Dataset label for logging.
-
-    Returns:
-        pd.DataFrame: Cleaned DataFrame.
-    """
     before = len(df)
     df = df.dropna(subset=[TITLE_COL, BODY_COL], how="all")
     df[TITLE_COL] = df[TITLE_COL].fillna("")
     df[BODY_COL] = df[BODY_COL].fillna("")
+    df[SUBJECT_COL] = df[SUBJECT_COL].fillna("") if SUBJECT_COL in df.columns else ""
     logger.info("[%s] Rows after missing-value handling: %d (dropped %d)", name, len(df), before - len(df))
     return df.reset_index(drop=True)
 
 
 def remove_duplicates(df: pd.DataFrame, name: str = "DataFrame") -> pd.DataFrame:
-    """
-    Remove duplicate rows based on title + text combination.
-
-    Args:
-        df: Input DataFrame.
-        name: Dataset label for logging.
-
-    Returns:
-        pd.DataFrame: Deduplicated DataFrame.
-    """
     before = len(df)
     df = df.drop_duplicates(subset=[TITLE_COL, BODY_COL])
     logger.info("[%s] Duplicates removed: %d", name, before - len(df))
@@ -145,16 +105,7 @@ def remove_duplicates(df: pd.DataFrame, name: str = "DataFrame") -> pd.DataFrame
 def encode_labels(df: pd.DataFrame, name: str = "DataFrame") -> pd.DataFrame:
     """
     Encode label column using config.LABEL2ID.
-
-    Args:
-        df: Input DataFrame with label column.
-        name: Dataset label for logging.
-
-    Returns:
-        pd.DataFrame: Label-encoded DataFrame.
-
-    Raises:
-        AssertionError: If label mapping fails.
+    Supports both TRUE/FALSE (competition) and REAL/FAKE (WELFake) formats.
     """
     df[LABEL_COL] = df[LABEL_COL].map(LABEL2ID)
     null_labels = df[LABEL_COL].isnull().sum()
@@ -171,14 +122,7 @@ def preprocess_dataframe(
 ) -> pd.DataFrame:
     """
     Full preprocessing pipeline for one DataFrame.
-
-    Args:
-        df: Raw input DataFrame.
-        is_train: Whether labels should be encoded.
-        name: Dataset label for logging.
-
-    Returns:
-        pd.DataFrame: Preprocessed DataFrame.
+    Combined text = subject + [SEP] + title + [SEP] + text (free accuracy boost).
     """
     required = [TITLE_COL, BODY_COL]
     if is_train:
@@ -188,10 +132,14 @@ def preprocess_dataframe(
     df = handle_missing(df, name)
     df = remove_duplicates(df, name)
 
-    df["_title_clean"] = df[TITLE_COL].apply(clean_text)
-    df["_body_clean"] = df[BODY_COL].apply(clean_text)
-    df[TEXT_COL] = (df["_title_clean"] + " [SEP] " + df["_body_clean"]).apply(lambda x: x[:2000])
-    df = df.drop(columns=["_title_clean", "_body_clean"])
+    title_clean   = df[TITLE_COL].apply(clean_text)
+    body_clean    = df[BODY_COL].apply(clean_text)
+    subject_clean = df[SUBJECT_COL].apply(clean_text) if SUBJECT_COL in df.columns else pd.Series([""] * len(df))
+
+    # subject gives the model topic context — strong discriminator for fake vs real
+    df[TEXT_COL] = (
+        subject_clean + " [SEP] " + title_clean + " [SEP] " + body_clean
+    ).apply(lambda x: x[:2000])
 
     if is_train:
         df = encode_labels(df, name)
@@ -205,17 +153,6 @@ def stratified_split(
     val_split: float = VAL_SPLIT,
     seed: int = SEED,
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
-    """
-    Create stratified train/validation split.
-
-    Args:
-        df: Labeled processed DataFrame.
-        val_split: Validation ratio.
-        seed: Random seed.
-
-    Returns:
-        Tuple[pd.DataFrame, pd.DataFrame]: train_df, val_df
-    """
     train_df, val_df = train_test_split(
         df,
         test_size=val_split,
@@ -231,30 +168,11 @@ def split_single_welfake(
     df: pd.DataFrame,
     seed: int = SEED,
 ) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    """
-    Split single WELFake file into stratified 70/15/15 train/val/test.
-
-    Args:
-        df: Preprocessed labeled DataFrame.
-        seed: Random seed.
-
-    Returns:
-        Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-            train_df, val_df, test_df
-    """
     train_df, temp_df = train_test_split(
-        df,
-        test_size=0.30,
-        stratify=df[LABEL_COL],
-        random_state=seed,
-        shuffle=True,
+        df, test_size=0.30, stratify=df[LABEL_COL], random_state=seed, shuffle=True,
     )
     val_df, test_df = train_test_split(
-        temp_df,
-        test_size=0.50,
-        stratify=temp_df[LABEL_COL],
-        random_state=seed,
-        shuffle=True,
+        temp_df, test_size=0.50, stratify=temp_df[LABEL_COL], random_state=seed, shuffle=True,
     )
     logger.info(
         "WELFake split complete — train: %d | val: %d | test: %d",
@@ -268,27 +186,12 @@ def split_single_welfake(
 
 
 def save_split(df: pd.DataFrame, filepath: Path, name: str = "split") -> None:
-    """
-    Save DataFrame to CSV.
-
-    Args:
-        df: DataFrame to save.
-        filepath: Output file path.
-        name: Dataset label for logging.
-    """
     create_directory(filepath.parent)
     df.to_csv(filepath, index=False)
     logger.info("Saved [%s] → %s (%d rows)", name, filepath, len(df))
 
 
 def save_eda_plots(df: pd.DataFrame, outputs_dir: Path) -> None:
-    """
-    Save required EDA plots.
-
-    Args:
-        df: Labeled processed DataFrame.
-        outputs_dir: Directory for output images.
-    """
     try:
         import matplotlib
         matplotlib.use("Agg")
@@ -320,24 +223,12 @@ def save_eda_plots(df: pd.DataFrame, outputs_dir: Path) -> None:
         logger.warning("matplotlib not installed — skipping EDA plots.")
 
 
-def _build_stats(train_df: pd.DataFrame, val_df: pd.DataFrame, test_df: pd.DataFrame, mode: str) -> dict:
-    """
-    Build preprocessing statistics dictionary.
-
-    Args:
-        train_df: Train split.
-        val_df: Validation split.
-        test_df: Test split.
-        mode: Processing mode label.
-
-    Returns:
-        dict: Summary statistics.
-    """
+def _build_stats(train_df, val_df, test_df, mode):
     return {
         "mode": mode,
         "seed": int(SEED),
         "text_col": TEXT_COL,
-        "label_encoding": {"REAL": 1, "FAKE": 0},
+        "label_encoding": {"TRUE": 1, "FALSE": 0},
         "train_rows": int(len(train_df)),
         "val_rows": int(len(val_df)),
         "test_rows": int(len(test_df)),
@@ -364,22 +255,13 @@ def run_preprocessing(
     Mode B — Single-file WELFake:
         data/raw/WELFake_Dataset.csv only
         Output: processed train.csv, val.csv, test.csv via 70/15/15 split
-
-    Args:
-        train_path: Optional train CSV path override.
-        test_path: Optional test CSV path override.
-        processed_dir: Optional processed dir override.
-
-    Returns:
-        Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-            train_df, val_df, test_df
     """
     set_seed(SEED)
 
-    out_dir = Path(processed_dir or PROCESSED_DIR)
+    out_dir   = Path(processed_dir or PROCESSED_DIR)
     outputs_dir = Path(OUTPUTS_DIR)
     train_src = Path(train_path or TRAIN_FILE)
-    test_src = Path(test_path or TEST_FILE)
+    test_src  = Path(test_path or TEST_FILE)
     welfake_src = train_src.parent / "WELFake_Dataset.csv"
 
     logger.info("=" * 60)
@@ -390,7 +272,6 @@ def run_preprocessing(
         logger.info("Detected single-file mode: %s", welfake_src)
         raw_df = pd.read_csv(welfake_src)
         logger.info("Raw WELFake shape: %s | columns: %s", raw_df.shape, raw_df.columns.tolist())
-
         processed_df = preprocess_dataframe(raw_df, is_train=True, name="WELFake")
         train_df, val_df, test_df = split_single_welfake(processed_df, seed=SEED)
         mode = "single_file_welfake"
@@ -402,7 +283,7 @@ def run_preprocessing(
 
         logger.info("Detected official mode: train.csv + test.csv")
         raw_train = pd.read_csv(train_src)
-        raw_test = pd.read_csv(test_src)
+        raw_test  = pd.read_csv(test_src)
         logger.info("Raw train shape: %s | columns: %s", raw_train.shape, raw_train.columns.tolist())
         logger.info("Raw test shape : %s | columns: %s", raw_test.shape, raw_test.columns.tolist())
 
@@ -414,8 +295,8 @@ def run_preprocessing(
 
     save_eda_plots(train_df, outputs_dir)
     save_split(train_df, out_dir / "train.csv", "train")
-    save_split(val_df, out_dir / "val.csv", "val")
-    save_split(test_df, out_dir / "test.csv", "test")
+    save_split(val_df,   out_dir / "val.csv",   "val")
+    save_split(test_df,  out_dir / "test.csv",  "test")
 
     stats = _build_stats(train_df, val_df, test_df, mode=mode)
     save_json(stats, out_dir / "preprocessing_stats.json")
