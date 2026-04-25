@@ -69,14 +69,18 @@ BASELINE_MODEL  = "tfidf_logreg"
 TRANSFORMER     = "roberta-base"
 MAX_LEN         = 512
 
-# --- Training Hyperparameters ---
-BATCH_SIZE      = 16
-EPOCHS          = 3
-LEARNING_RATE   = 2e-5
-WARMUP_STEPS    = 500
-WEIGHT_DECAY    = 0.01
-VAL_SPLIT       = 0.15                    # 70/15/15 split for single-file dataset
-SEED            = 42
+# --- Training Hyperparameters (Anti-Overfitting Tuned) ---
+BATCH_SIZE           = 16
+EPOCHS               = 4        # early stopping (patience=2) is the real stopper
+LEARNING_RATE        = 2e-5
+WARMUP_STEPS         = 1000     # was 500 — slower ramp prevents early memorization
+WEIGHT_DECAY         = 0.10     # was 0.01 — 10x stronger L2 regularization
+MAX_GRAD_NORM        = 1.0      # gradient clipping — prevents explosive weight updates
+HIDDEN_DROPOUT       = 0.2      # dropout on transformer hidden layers
+ATTENTION_DROPOUT    = 0.2      # dropout on attention weights
+EVAL_BATCH_SIZE      = 64       # was 32 — fixes scalar gather UserWarning on last batch
+VAL_SPLIT            = 0.15     # 70/15/15 split
+SEED                 = 42
 
 # --- Inference ---
 CONFIDENCE_THRESHOLD = 0.70
