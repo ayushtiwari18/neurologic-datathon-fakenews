@@ -9,69 +9,78 @@
 import os
 
 # --- Paths ---
-# Instructions (02_project_structure.md): raw data in data/raw/
 DATA_DIR        = "data/"
 RAW_DIR         = "data/raw/"              # original dataset — DO NOT MODIFY
 PROCESSED_DIR   = "data/processed/"       # cleaned outputs from preprocess.py
 MODEL_DIR       = "models/"               # saved model weights (never commit)
 OUTPUTS_DIR     = "outputs/"              # plots, metrics, confusion matrix
 
-# --- Dataset Files ---
-# Instructions (02_project_structure.md): data/raw/dataset.csv
-TRAIN_FILE      = os.path.join(RAW_DIR, "train.csv")
-TEST_FILE       = os.path.join(RAW_DIR, "test.csv")
+# --- Dataset ---
+# Source: https://www.kaggle.com/datasets/clmentbisaillon/fake-and-real-news-dataset
+# Kaggle path: /kaggle/input/fake-and-real-news-dataset/
+# Two files:
+#   Fake.csv  — 23,481 fake news articles  → label = FALSE → 0
+#   True.csv  — 21,417 real news articles  → label = TRUE  → 1
+# Total: ~44,898 rows. Nearly balanced (1.1x ratio).
+# Columns in both files: title, text, subject, date
+FAKE_CSV        = "Fake.csv"              # filename only — path resolved in notebook
+TRUE_CSV        = "True.csv"              # filename only — path resolved in notebook
+
+# Processed output files (created by preprocess.py)
+TRAIN_FILE      = os.path.join(RAW_DIR, "train.csv")    # NOT used — preprocessing reads Fake/True directly
+TEST_FILE       = os.path.join(RAW_DIR, "test.csv")     # NOT used — no separate test file
 
 # --- Column Names ---
-# Instructions (06_data_preprocessing.md, 03_pipeline_architecture.md)
-LABEL_COL       = "label"                 # raw label column in CSV
-TITLE_COL       = "title"                 # raw title column in CSV
-BODY_COL        = "text"                  # raw body column in CSV
-SUBJECT_COL     = "subject"               # topic/category column — used in combined text
+# Both Fake.csv and True.csv have these exact columns:
+LABEL_COL       = "label"                 # added by Cell 6 — does not exist in raw files
+TITLE_COL       = "title"                 # article headline
+BODY_COL        = "text"                  # article body
+SUBJECT_COL     = "subject"               # topic category (e.g. politicsNews, worldnews)
+DATE_COL        = "date"                  # publication date — dropped during preprocessing
 TEXT_COL        = "combined"              # CREATED during preprocessing
                                            # = subject_clean + " [SEP] " + title_clean + " [SEP] " + text_clean
 
 # --- Label Encoding ---
-# Competition dataset uses TRUE/FALSE labels (not REAL/FAKE)
-# TRUE  = Real news = 1
-# FALSE = Fake news = 0
+# Fake.csv  → we assign label = 'FALSE' → encodes to 0
+# True.csv  → we assign label = 'TRUE'  → encodes to 1
 LABEL2ID        = {
-    "TRUE":  1, "FALSE": 0,   # competition dataset format
-    "true":  1, "false": 0,
-    "REAL":  1, "FAKE":  0,   # fallback for WELFake / internal use
-    "real":  1, "fake":  0,
-    "1":     1, "0":     0,
-     1:      1,  0:      0,
-     1.0:    1,  0.0:    0,   # handles pandas float-loaded labels
+    "TRUE":  1,
+    "FALSE": 0,
+    "true":  1,
+    "false": 0,
+    "1":     1,
+    "0":     0,
+     1:      1,
+     0:      0,
+     1.0:    1,
+     0.0:    0,
 }
 ID2LABEL        = {1: "TRUE", 0: "FALSE"}
 NUM_LABELS      = 2
 
-# --- Class Imbalance ---
-# Dataset: TRUE=15438 (64.6%), FALSE=8455 (35.4%) — imbalanced 1.8x
-# USE_CLASS_WEIGHTS=True tells train.py to compute and apply class weights
-# to the loss function so the model doesn't just predict TRUE for everything.
+# --- Class Balance ---
+# Fake.csv: 23,481 rows | True.csv: 21,417 rows
+# Ratio: 1.1x — nearly balanced. Class weights not required.
+# USE_CLASS_WEIGHTS left True as a safety net (negligible impact on balanced data).
 USE_CLASS_WEIGHTS = True
 
 # --- Model ---
-# Instructions (04_model_training_strategy.md, 10_resources.md)
-BASELINE_MODEL  = "tfidf_logreg"          # Phase 3 fast baseline
-TRANSFORMER     = "roberta-base"          # Phase 4 main model (HuggingFace Hub)
-MAX_LEN         = 512                     # max token length — never reduce to 128/256
+BASELINE_MODEL  = "tfidf_logreg"
+TRANSFORMER     = "roberta-base"
+MAX_LEN         = 512
 
 # --- Training Hyperparameters ---
-# Instructions (04_model_training_strategy.md)
-BATCH_SIZE      = 16                      # safe for Colab T4; reduce to 8 if OOM
-EPOCHS          = 3                       # sufficient for convergence on ~40k samples
-LEARNING_RATE   = 2e-5                    # AdamW default for RoBERTa fine-tuning
-WARMUP_STEPS    = 500                     # 10% of total steps
+BATCH_SIZE      = 16
+EPOCHS          = 3
+LEARNING_RATE   = 2e-5
+WARMUP_STEPS    = 500
 WEIGHT_DECAY    = 0.01
-VAL_SPLIT       = 0.20                    # 80/20 split — per instructions/06
+VAL_SPLIT       = 0.15                    # 70/15/15 split for single-file dataset
 SEED            = 42
 
 # --- Inference ---
-# Instructions (04_model_training_strategy.md)
-CONFIDENCE_THRESHOLD = 0.70              # below this → "UNCERTAIN — needs human review"
+CONFIDENCE_THRESHOLD = 0.70
 
-# --- API (Phase 8 FastAPI / Gradio) ---
+# --- API ---
 API_HOST        = "0.0.0.0"
 API_PORT        = 8000
